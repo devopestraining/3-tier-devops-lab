@@ -1,0 +1,102 @@
+name: 3-Tier DevOps CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  # -------------------------
+  # 1. TEST
+  # -------------------------
+  test:
+    name: Run Application Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Dependencies
+        working-directory: backend
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run Tests
+        working-directory: backend
+        run: |
+          pytest -v
+
+
+  # -------------------------
+  # 2. BUILD
+  # -------------------------
+  build:
+    name: Build Docker Images
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Compose
+        run: |
+          docker compose build
+
+
+  # -------------------------
+  # 3. DEPLOY
+  # -------------------------
+  deploy:
+    name: Deploy to Ubuntu VM
+    needs: build
+
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Stop Existing Application
+        run: |
+          docker compose down
+
+      - name: Build Application
+        run: |
+          docker compose build
+
+      - name: Start Application
+        run: |
+          docker compose up -d
+
+      - name: Check Containers
+        run: |
+          docker compose ps
+
+      - name: Wait for Application
+        run: |
+          sleep 15
+
+      - name: Smoke Test
+        run: |
+          curl -f http://localhost:8080/health || exit 1
+
+      - name: Show Logs on Failure
+        if: failure()
+        run: |
+          docker compose logs --tail=100
