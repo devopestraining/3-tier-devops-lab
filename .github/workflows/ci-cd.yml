@@ -1,0 +1,566 @@
+name: 3-Tier DevOps CI/CD
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: "Build and scan only. Do not deploy."
+        required: true
+        type: boolean
+        default: false
+
+
+# ==========================================
+# PREVENT CONCURRENT DEPLOYMENTS
+# ==========================================
+
+concurrency:
+  group: 3-tier-devops-deployment
+  cancel-in-progress: false
+
+
+# ==========================================
+# GLOBAL VARIABLES
+# ==========================================
+
+env:
+
+  APP_NAME: 3-tier-devops-lab
+
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/3-tier-backend
+
+  SERVER_IP: ${{ secrets.SERVER_IP }}
+
+  SERVER_USER: ${{ secrets.SSH_USER }}
+
+  PROJECT_DIR: /home/ubuntu/3-tier-devops
+
+  FRONTEND_PORT: 8080
+
+  BACKEND_PORT: 5000
+
+
+jobs:
+
+
+  # ==========================================
+  # 1. BUILD, TEST, SCAN AND DEPLOY
+  # ==========================================
+
+  build-test-scan-deploy:
+
+    name: Build, Test, Scan and Deploy
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 30
+
+
+    steps:
+
+
+      # ==========================================
+      # 2. CHECKOUT
+      # ==========================================
+
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+
+      - name: Display Git Information
+        run: |
+
+          echo "=========================================="
+          echo "CHECKOUT SOURCE CODE"
+          echo "=========================================="
+
+          echo "Git branch:"
+          git branch --show-current || true
+
+          echo "Git commit:"
+          git rev-parse HEAD
+
+          echo "Project files:"
+          find . -maxdepth 3 -type f | sort | head -100
+
+
+      # ==========================================
+      # 3. INITIALIZE VARIABLES
+      # ==========================================
+
+      - name: Initialize Build Variables
+        id: variables
+        run: |
+
+          GIT_COMMIT_SHORT=$(git rev-parse --short=7 HEAD)
+
+          IMAGE_TAG="${{ github.run_number }}-${GIT_COMMIT_SHORT}"
+
+          echo "GIT_COMMIT_SHORT=$GIT_COMMIT_SHORT" >> $GITHUB_ENV
+
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
+          echo "=========================================="
+          echo "BUILD VARIABLES"
+          echo "=========================================="
+
+          echo "Application : $APP_NAME"
+          echo "Build       : ${{ github.run_number }}"
+          echo "Git Commit  : $GIT_COMMIT_SHORT"
+          echo "Image Tag   : $IMAGE_TAG"
+
+
+      # ==========================================
+      # 4. SETUP PYTHON
+      # ==========================================
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+
+      - name: Verify Python Setup
+        run: |
+
+          echo "=========================================="
+          echo "PYTHON VERSION"
+          echo "=========================================="
+
+          python --version
+
+          pip --version
+
+
+      # ==========================================
+      # 5. BACKEND BUILD & TEST
+      # ==========================================
+
+      - name: Install Backend Dependencies
+        working-directory: backend
+        run: |
+
+          echo "=========================================="
+          echo "INSTALLING BACKEND DEPENDENCIES"
+          echo "=========================================="
+
+          pip install -r requirements.txt
+
+          pip install pytest
+
+
+      - name: Build and Test Backend
+        working-directory: backend
+        run: |
+
+          echo "=========================================="
+          echo "BACKEND BUILD AND TEST"
+          echo "=========================================="
+
+          pytest -v
+
+
+      # ==========================================
+      # 6. UPLOAD TEST RESULTS
+      # ==========================================
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: backend/
+          if-no-files-found: warn
+
+
+      # ==========================================
+      # 7. DOCKER BUILDX
+      # ==========================================
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+
+      # ==========================================
+      # 8. VALIDATE DOCKER COMPOSE
+      # ==========================================
+
+      - name: Validate Docker Compose
+        run: |
+
+          echo "=========================================="
+          echo "VALIDATING DOCKER COMPOSE"
+          echo "=========================================="
+
+          docker compose config
+
+
+      # ==========================================
+      # 9. BUILD DOCKER IMAGES
+      # ==========================================
+
+      - name: Build Docker Images
+        run: |
+
+          echo "=========================================="
+          echo "BUILDING DOCKER IMAGES"
+          echo "=========================================="
+
+          docker compose build
+
+          echo ""
+
+          echo "Docker images:"
+
+          docker images
+
+
+      # ==========================================
+      # 10. TRIVY SECURITY SCAN
+      # ==========================================
+
+      - name: Run Trivy Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 3-tier-devops-backend:latest
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+
+
+      # ==========================================
+      # 11. LOGIN TO DOCKER HUB
+      # ==========================================
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+
+      # ==========================================
+      # 12. TAG AND PUSH BACKEND IMAGE
+      # ==========================================
+
+      - name: Tag and Push Backend Image
+        run: |
+
+          echo "=========================================="
+          echo "PUSHING BACKEND IMAGE TO DOCKER HUB"
+          echo "=========================================="
+
+          docker tag \
+            3-tier-devops-backend:latest \
+            ${IMAGE_NAME}:${IMAGE_TAG}
+
+          docker tag \
+            3-tier-devops-backend:latest \
+            ${IMAGE_NAME}:latest
+
+          docker push ${IMAGE_NAME}:${IMAGE_TAG}
+
+          docker push ${IMAGE_NAME}:latest
+
+
+      # ==========================================
+      # 13. SETUP SSH KEY
+      # ==========================================
+
+      - name: Setup SSH Key
+        if: github.event.inputs.skip_deploy != 'true'
+        run: |
+
+          echo "=========================================="
+          echo "SETTING UP SSH"
+          echo "=========================================="
+
+          mkdir -p ~/.ssh
+
+          printf '%s\n' '${{ secrets.SSH_PRIVATE_KEY }}' \
+            > ~/.ssh/id_rsa
+
+          chmod 600 ~/.ssh/id_rsa
+
+          ssh-keyscan -H "${SERVER_IP}" \
+            >> ~/.ssh/known_hosts
+
+          echo "SSH key configured."
+
+
+      # ==========================================
+      # 14. TEST SSH CONNECTION
+      # ==========================================
+
+      - name: Test SSH Connection
+        if: github.event.inputs.skip_deploy != 'true'
+        run: |
+
+          echo "=========================================="
+          echo "TESTING SSH CONNECTION"
+          echo "=========================================="
+
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=no \
+            ${SERVER_USER}@${SERVER_IP} \
+            "hostname && docker --version && docker compose version"
+
+
+      # ==========================================
+      # 15. CREATE .env ON SERVER
+      # ==========================================
+
+      - name: Create Environment File
+        if: github.event.inputs.skip_deploy != 'true'
+        run: |
+
+          echo "=========================================="
+          echo "CREATING .env FILE"
+          echo "=========================================="
+
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            ${SERVER_USER}@${SERVER_IP} << EOF
+
+            set -e
+
+            cd ${PROJECT_DIR}
+
+            cat > .env << ENVEOF
+
+          FRONTEND_PORT=${FRONTEND_PORT}
+          BACKEND_PORT=${BACKEND_PORT}
+
+          MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+          MYSQL_USER=${{ secrets.MYSQL_USER }}
+          MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+          MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+
+          ENVEOF
+
+            chmod 600 .env
+
+            echo ".env created successfully."
+
+          EOF
+
+
+      # ==========================================
+      # 16. DEPLOY APPLICATION
+      # ==========================================
+
+      - name: Deploy Application
+        if: github.event.inputs.skip_deploy != 'true'
+        run: |
+
+          echo "=========================================="
+          echo "DEPLOYING 3-TIER APPLICATION"
+          echo "=========================================="
+
+          echo "Application : ${APP_NAME}"
+          echo "Target Host : ${SERVER_IP}"
+          echo "Image Tag   : ${IMAGE_TAG}"
+
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=no \
+            ${SERVER_USER}@${SERVER_IP} << EOF
+
+            set -e
+
+            echo "=========================================="
+            echo "REMOTE DEPLOYMENT"
+            echo "=========================================="
+
+            cd ${PROJECT_DIR}
+
+            echo "Pulling latest source code..."
+
+            git pull origin main
+
+            echo "Stopping existing containers..."
+
+            docker compose down
+
+            echo "Building application..."
+
+            docker compose build
+
+            echo "Starting application..."
+
+            docker compose up -d
+
+            echo "Docker Compose deployment completed."
+
+            echo ""
+            echo "Container status:"
+
+            docker compose ps
+
+          EOF
+
+
+      # ==========================================
+      # 17. DEPLOYMENT HEALTH CHECK
+      # ==========================================
+
+      - name: Deployment Health Check
+        if: github.event.inputs.skip_deploy != 'true'
+        run: |
+
+          echo "=========================================="
+          echo "DEPLOYMENT HEALTH CHECK"
+          echo "=========================================="
+
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=no \
+            ${SERVER_USER}@${SERVER_IP} << EOF
+
+            set -e
+
+            cd ${PROJECT_DIR}
+
+            echo "Checking Docker Compose status..."
+
+            docker compose ps
+
+            echo ""
+            echo "Checking backend health..."
+
+            curl -f \
+              --max-time 10 \
+              http://localhost:${BACKEND_PORT}/health
+
+            echo ""
+
+            echo "Backend health check successful."
+
+          EOF
+
+
+      # ==========================================
+      # 18. SMOKE TEST
+      # ==========================================
+
+      - name: Smoke Test
+        if: github.event.inputs.skip_deploy != 'true'
+        run: |
+
+          echo "=========================================="
+          echo "APPLICATION SMOKE TEST"
+          echo "=========================================="
+
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=no \
+            ${SERVER_USER}@${SERVER_IP} << EOF
+
+            set -e
+
+            echo "Testing application through NGINX..."
+
+            curl -f \
+              --max-time 10 \
+              http://localhost:${FRONTEND_PORT}/ || {
+
+                echo "ERROR: 3-tier application smoke test failed."
+
+                echo "=========================================="
+                echo "DOCKER COMPOSE STATUS"
+                echo "=========================================="
+
+                cd ${PROJECT_DIR}
+
+                docker compose ps
+
+                echo "=========================================="
+                echo "APPLICATION LOGS"
+                echo "=========================================="
+
+                docker compose logs --tail=100
+
+                exit 1
+            }
+
+            echo "Smoke test successful."
+
+          EOF
+
+
+      # ==========================================
+      # 19. SUCCESS
+      # ==========================================
+
+      - name: Deployment Successful
+        if: success()
+        run: |
+
+          echo "=========================================="
+          echo "3-TIER DEPLOYMENT SUCCESSFUL"
+          echo "=========================================="
+
+          echo "Application : ${APP_NAME}"
+          echo "Image Tag   : ${IMAGE_TAG}"
+          echo "Target Host : ${SERVER_IP}"
+
+          echo ""
+          echo "Application URL:"
+          echo "http://${SERVER_IP}:${FRONTEND_PORT}"
+
+          echo "=========================================="
+
+
+      # ==========================================
+      # 20. FAILURE
+      # ==========================================
+
+      - name: Pipeline Failed
+        if: failure()
+        run: |
+
+          echo "=========================================="
+          echo "3-TIER PIPELINE FAILED"
+          echo "=========================================="
+
+          echo "Build       : ${{ github.run_number }}"
+          echo "Application : ${APP_NAME}"
+          echo "Target Host : ${SERVER_IP}"
+
+          echo ""
+          echo "Check GitHub Actions logs for details."
+
+          echo "=========================================="
+
+
+      # ==========================================
+      # 21. CLEANUP
+      # ==========================================
+
+      - name: Cleanup
+        if: always()
+        run: |
+
+          echo "Cleaning temporary files..."
+
+          docker image prune -f || true
+
+          rm -f ~/.ssh/id_rsa || true
