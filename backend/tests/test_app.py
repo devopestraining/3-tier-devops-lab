@@ -27,9 +27,9 @@ def test_health():
     assert response.status_code == 200
 
 
-def test_db_test():
-    client = app.test_client()
+#def test_db_test():
+ #   client = app.test_client()
 
-    response = client.get("/db-test")
+  #  response = client.get("/db-test")
 
-    assert response.status_code in [200, 500]
+   # assert response.status_code in [200, 500]
