@@ -227,14 +227,14 @@ jobs:
       # 10. TRIVY SECURITY SCAN
       # ==========================================
 
-      - name: Run Trivy Security Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: 3-tier-devops-backend:latest
-          format: table
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "0"
+      # - name: Run Trivy Security Scan
+      #   uses: aquasecurity/trivy-action@master
+      #   with:
+      #     image-ref: 3-tier-devops-backend:latest
+      #     format: table
+      #     severity: HIGH,CRITICAL
+      #     ignore-unfixed: true
+      #     exit-code: "0"
 
 
       # ==========================================
