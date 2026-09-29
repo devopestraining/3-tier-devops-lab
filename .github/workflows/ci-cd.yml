@@ -247,7 +247,6 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-
       # ==========================================
       # 12. TAG AND PUSH BACKEND IMAGE
       # ==========================================
@@ -259,17 +258,17 @@ jobs:
           echo "PUSHING BACKEND IMAGE TO DOCKER HUB"
           echo "=========================================="
 
-          docker tag \
-            3-tier-devops-lab:latest \
-            ${IMAGE_NAME}:${IMAGE_TAG}
+          docker tag 3-tier-devops-lab:latest ${IMAGE_NAME}:${IMAGE_TAG}
 
-          docker tag \
-            3-tier-devops-lab:latest \
-            ${IMAGE_NAME}:latest
+          docker tag 3-tier-devops-lab:latest ${IMAGE_NAME}:latest
 
           docker push ${IMAGE_NAME}:${IMAGE_TAG}
 
           docker push ${IMAGE_NAME}:latest
+
+          echo "=========================================="
+          echo "BACKEND IMAGE PUSH SUCCESSFUL"
+          echo "=========================================="
 
 
       # ==========================================
