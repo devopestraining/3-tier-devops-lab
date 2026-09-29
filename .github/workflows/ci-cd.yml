@@ -31,13 +31,13 @@ env:
 
   APP_NAME: 3-tier-devops-lab
 
-  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/3-tier-backend
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab
 
   SERVER_IP: ${{ secrets.SERVER_IP }}
 
   SERVER_USER: ${{ secrets.SSH_USER }}
 
-  PROJECT_DIR: /home/ubuntu/3-tier-devops
+  PROJECT_DIR: /home/ubuntu/3-tier-devops-lab
 
   FRONTEND_PORT: 8083
 
