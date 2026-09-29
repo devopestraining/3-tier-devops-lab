@@ -260,11 +260,11 @@ jobs:
           echo "=========================================="
 
           docker tag \
-            3-tier-devops-backend:latest \
+            3-tier-devops-lab:latest \
             ${IMAGE_NAME}:${IMAGE_TAG}
 
           docker tag \
-            3-tier-devops-backend:latest \
+            3-tier-devops-lab:latest \
             ${IMAGE_NAME}:latest
 
           docker push ${IMAGE_NAME}:${IMAGE_TAG}
