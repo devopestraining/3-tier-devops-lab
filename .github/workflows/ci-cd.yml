@@ -308,6 +308,9 @@ jobs:
           echo "TESTING SSH CONNECTION"
           echo "=========================================="
 
+          echo "Server : ${SERVER_IP}"
+          echo "User   : ${SERVER_USER}"
+          
           ssh \
             -i ~/.ssh/id_rsa \
             -o BatchMode=yes \
