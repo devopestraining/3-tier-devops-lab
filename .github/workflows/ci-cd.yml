@@ -324,41 +324,41 @@ jobs:
       # 15. CREATE .env ON SERVER
       # ==========================================
 
-      - name: Create Environment File
-        if: github.event.inputs.skip_deploy != 'true'
-        run: |
+      # - name: Create Environment File
+      #   if: github.event.inputs.skip_deploy != 'true'
+      #   run: |
 
-          echo "=========================================="
-          echo "CREATING .env FILE"
-          echo "=========================================="
+      #     echo "=========================================="
+      #     echo "CREATING .env FILE"
+      #     echo "=========================================="
 
-          ssh \
-            -i ~/.ssh/id_rsa \
-            -o BatchMode=yes \
-            -o ConnectTimeout=10 \
-            ${SERVER_USER}@${SERVER_IP} << EOF
+      #     ssh \
+      #       -i ~/.ssh/id_rsa \
+      #       -o BatchMode=yes \
+      #       -o ConnectTimeout=10 \
+      #       ${SERVER_USER}@${SERVER_IP} << EOF
 
-            set -e
+      #       set -e
 
-            cd ${PROJECT_DIR}
+      #       cd ${PROJECT_DIR}
 
-            cat > .env << ENVEOF
+      #       cat > .env << ENVEOF
 
-          FRONTEND_PORT=${FRONTEND_PORT}
-          BACKEND_PORT=${BACKEND_PORT}
+      #     FRONTEND_PORT=${FRONTEND_PORT}
+      #     BACKEND_PORT=${BACKEND_PORT}
 
-          MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
-          MYSQL_USER=${{ secrets.MYSQL_USER }}
-          MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
-          MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
+      #     MYSQL_DATABASE=${{ secrets.MYSQL_DATABASE }}
+      #     MYSQL_USER=${{ secrets.MYSQL_USER }}
+      #     MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD }}
+      #     MYSQL_ROOT_PASSWORD=${{ secrets.MYSQL_ROOT_PASSWORD }}
 
-          ENVEOF
+      #     ENVEOF
 
-            chmod 600 .env
+      #       chmod 600 .env
 
-            echo ".env created successfully."
+      #       echo ".env created successfully."
 
-          EOF
+      #     EOF
 
 
       # ==========================================
