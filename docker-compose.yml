@@ -13,6 +13,7 @@ services:
       - frontend_net
 
   backend:
+    image: 3-tier-devops-lab:latest
     build: ./backend
     container_name: devops-backend
     environment:
