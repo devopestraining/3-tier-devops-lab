@@ -1,4 +1,4 @@
-```yaml
+
 name: 3-Tier DevOps CI/CD
 
 on:
@@ -50,11 +50,56 @@ jobs:
 
   build-test-scan-deploy:
 
-    name: Build, Test and Deploy
+  - name: Build and Test Backend
+    working-directory: backend
+    env:
+       PYTHONPATH: .
+       DB_HOST: 127.0.0.1
+       DB_PORT: 3306
+       DB_NAME: devopsdb
+       DB_USER: devops
+       DB_PASSWORD: d0000000
+    run: |
 
-    runs-on: ubuntu-latest
+      echo "=========================================="
+      echo "BACKEND BUILD AND TEST"
+      echo "=========================================="
 
-    timeout-minutes: 30
+      echo "Environment variables:"
+      echo "DB_HOST=${DB_HOST}"
+      echo "DB_PORT=${DB_PORT}"
+      echo "DB_NAME=${DB_NAME}"
+      echo "DB_USER=${DB_USER}"
+
+      echo ""
+      echo "Testing MySQL connection..."
+
+      python - <<'PY'
+      import os
+      import mysql.connector
+
+      print("Python sees DB_HOST =", os.getenv("DB_HOST"))
+      print("Python sees DB_PORT =", os.getenv("DB_PORT"))
+      print("Python sees DB_NAME =", os.getenv("DB_NAME"))
+      print("Python sees DB_USER =", os.getenv("DB_USER"))
+
+      conn = mysql.connector.connect(
+        host=os.getenv("DB_HOST"),
+        port=int(os.getenv("DB_PORT")),
+        database=os.getenv("DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD")
+        
+)
+
+    print("MySQL connection: SUCCESS")
+      conn.close()
+      PY
+
+      echo ""
+      echo "Running pytest..."
+
+      pytest -v
 
     # ==========================================
     # MYSQL SERVICE FOR BACKEND TESTS
@@ -68,7 +113,7 @@ jobs:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: devopsdb
           MYSQL_USER: devops
-          MYSQL_PASSWORD: d0000000
+          MYSQL_PASSWORD: devopspass
 
         ports:
           - 3306:3306
@@ -655,4 +700,4 @@ jobs:
           docker image prune -f || true
 
           rm -f ~/.ssh/id_rsa || true
-```
+
