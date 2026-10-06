@@ -13,8 +13,7 @@ services:
       - frontend_net
 
   backend:
-    image: 3-tier-devops-lab:latest
-    build: ./backend
+    image: ${IMAGE_NAME}:${IMAGE_TAG}
     container_name: devops-backend
     environment:
       DB_HOST: database
