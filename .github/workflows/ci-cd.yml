@@ -1,4 +1,4 @@
-```yaml
+
 name: 3-Tier DevOps CI/CD
 
 on:
@@ -555,4 +555,3 @@ jobs:
           echo "Frontend    : http://${{ secrets.SERVER_IP }}:${{ env.FRONTEND_PORT }}"
           echo ""
           echo "=========================================="
-```
