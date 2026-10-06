@@ -270,7 +270,7 @@ jobs:
           DB_PORT: 3306
           DB_NAME: devopsdb
           DB_USER: devops
-          DB_PASSWORD: d0000000
+          DB_PASSWORD: devopspass
         run: |
 
           echo "=========================================="
@@ -331,7 +331,7 @@ jobs:
           DB_PORT: 3306
           DB_NAME: devopsdb
           DB_USER: devops
-          DB_PASSWORD: d0000000
+          DB_PASSWORD: devopspass
         run: |
 
           echo "=========================================="
@@ -382,7 +382,7 @@ jobs:
           DB_PORT: 3306
           DB_NAME: devopsdb
           DB_USER: devops
-          DB_PASSWORD: d0000000
+          DB_PASSWORD: devopspass
         run: |
 
           echo "=========================================="
