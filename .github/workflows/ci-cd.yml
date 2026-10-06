@@ -1,4 +1,4 @@
-
+```yaml
 name: 3-Tier DevOps CI/CD
 
 on:
@@ -9,776 +9,550 @@ on:
   workflow_dispatch:
     inputs:
       skip_deploy:
-        description: "Build and scan only. Do not deploy."
-        required: true
-        type: boolean
+        description: "Skip VPS deployment"
+        required: false
         default: false
-
-# ==========================================
-# PREVENT CONCURRENT DEPLOYMENTS
-# ==========================================
-
-concurrency:
-  group: 3-tier-devops-deployment
-  cancel-in-progress: false
-
-# ==========================================
-# GLOBAL VARIABLES
-# ==========================================
+        type: boolean
 
 env:
   APP_NAME: 3-tier-devops-lab
 
+  # Docker Hub image
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab
 
+  # VPS
   SERVER_IP: ${{ secrets.SERVER_IP }}
-
   SERVER_USER: ${{ secrets.SSH_USER }}
 
-  # Host port
-  FRONTEND_PORT: 8083
-
-  # Port exposed by the Docker image
-  CONTAINER_PORT: 5000
-
+  # Application
+  FRONTEND_PORT: 8080
+  BACKEND_PORT: 5000
 
 jobs:
 
-  # ==========================================
-  # BUILD, TEST AND DEPLOY
-  # ==========================================
-
-  build-test-scan-deploy:
-
-    name: Build, Test and Deploy
-
+  # ============================================================
+  # 1. BUILD AND TEST
+  # ============================================================
+  build-test:
+    name: Build and Test Backend
     runs-on: ubuntu-latest
 
-    timeout-minutes: 30
-
-    # ==========================================
-    # MYSQL SERVICE FOR BACKEND TESTS
-    # ==========================================
-
     services:
-
       mysql:
         image: mysql:8.4
 
         env:
-          MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: devopsdb
           MYSQL_USER: devops
           MYSQL_PASSWORD: devopspass
+          MYSQL_ROOT_PASSWORD: rootpass
 
         ports:
           - 3306:3306
 
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -proot"
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -prootpass"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
 
+    defaults:
+      run:
+        working-directory: backend
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_NAME: devopsdb
+      DB_USER: devops
+      DB_PASSWORD: devopspass
+      PYTHONPATH: .
+
     steps:
 
-      # ==========================================
-      # 1. CHECKOUT SOURCE CODE
-      # ==========================================
-
-      - name: Checkout Source Code
+      # ----------------------------------------------------------
+      # Checkout
+      # ----------------------------------------------------------
+      - name: Checkout source code
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-
-      # ==========================================
-      # 2. DISPLAY GIT INFORMATION
-      # ==========================================
-
-      - name: Display Git Information
-        run: |
-
-          echo "=========================================="
-          echo "CHECKOUT SOURCE CODE"
-          echo "=========================================="
-
-          echo "Git branch:"
-          git branch --show-current || true
-
-          echo "Git commit:"
-          git rev-parse HEAD
-
-
-      # ==========================================
-      # 3. INITIALIZE BUILD VARIABLES
-      # ==========================================
-
-      - name: Initialize Build Variables
-        id: variables
-        run: |
-
-          GIT_COMMIT_SHORT=$(git rev-parse --short=7 HEAD)
-
-          IMAGE_TAG="${{ github.run_number }}-${GIT_COMMIT_SHORT}"
-
-          echo "GIT_COMMIT_SHORT=$GIT_COMMIT_SHORT" >> "$GITHUB_ENV"
-
-          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
-
-          echo "=========================================="
-          echo "BUILD VARIABLES"
-          echo "=========================================="
-
-          echo "Application : $APP_NAME"
-          echo "Build       : ${{ github.run_number }}"
-          echo "Git Commit  : $GIT_COMMIT_SHORT"
-          echo "Image Tag   : $IMAGE_TAG"
-
-
-      # ==========================================
-      # 4. SETUP PYTHON
-      # ==========================================
-
+      # ----------------------------------------------------------
+      # Python
+      # ----------------------------------------------------------
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-
-      # ==========================================
-      # 5. VERIFY PYTHON
-      # ==========================================
-
-      - name: Verify Python Setup
+      # ----------------------------------------------------------
+      # Install dependencies
+      # ----------------------------------------------------------
+      - name: Install Python dependencies
         run: |
-
-          echo "=========================================="
-          echo "PYTHON VERSION"
-          echo "=========================================="
-
-          python --version
-
-          pip --version
-
-
-      # ==========================================
-      # 6. BACKEND DEPENDENCIES
-      # ==========================================
-
-      - name: Install Backend Dependencies
-        working-directory: backend
-        run: |
-
-          echo "=========================================="
-          echo "INSTALLING BACKEND DEPENDENCIES"
-          echo "=========================================="
-
           python -m pip install --upgrade pip
 
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
 
           pip install pytest
 
-
-      # ==========================================
-      # 7. WAIT FOR MYSQL
-      # ==========================================
-
+      # ----------------------------------------------------------
+      # Wait for MySQL
+      # ----------------------------------------------------------
       - name: Wait for MySQL
+        working-directory: .
         run: |
-
-          echo "=========================================="
-          echo "WAITING FOR MYSQL"
-          echo "=========================================="
+          echo "Waiting for MySQL..."
 
           for i in {1..30}; do
-
             if mysqladmin ping \
               -h 127.0.0.1 \
               -P 3306 \
-              -u root \
-              -proot \
+              -uroot \
+              -prootpass \
               --silent; then
 
-              echo "MySQL is ready."
+              echo "MySQL is ready"
               break
-
             fi
 
-            echo "Waiting for MySQL... attempt $i/30"
-
+            echo "Waiting for MySQL... attempt $i"
             sleep 2
-
           done
 
-
-      # ==========================================
-      # 8. INITIALIZE DATABASE
-      # ==========================================
-
-      - name: Initialize Database
+      # ----------------------------------------------------------
+      # Install MySQL client
+      # ----------------------------------------------------------
+      - name: Install MySQL client
+        working-directory: .
         run: |
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
 
-          echo "=========================================="
-          echo "INITIALIZING MYSQL DATABASE"
-          echo "=========================================="
-
-          echo "Database : devopsdb"
-          echo "User     : devops"
+      # ----------------------------------------------------------
+      # Initialize database
+      # ----------------------------------------------------------
+      - name: Initialize database
+        working-directory: .
+        run: |
+          echo "Initializing database..."
 
           mysql \
             -h 127.0.0.1 \
             -P 3306 \
-            -u root \
-            -proot \
+            -uroot \
+            -prootpass \
             devopsdb < database/init.sql
 
-          echo ""
-          echo "Checking database tables..."
+          echo "Database initialized"
 
-          mysql \
-            -h 127.0.0.1 \
-            -P 3306 \
-            -u root \
-            -proot \
-            -e "USE devopsdb; SHOW TABLES;"
-
-          echo ""
-          echo "Checking demo table data..."
-
-          mysql \
-            -h 127.0.0.1 \
-            -P 3306 \
-            -u root \
-            -proot \
-            -e "USE devopsdb; SELECT * FROM demo;"
-
-          echo ""
-          echo "Database initialization completed successfully."
-
-
-      # ==========================================
-      # 9. VERIFY DATABASE CONNECTION
-      # ==========================================
-
-      - name: Verify Backend Database Connection
-        working-directory: backend
-        env:
-          PYTHONPATH: .
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_NAME: devopsdb
-          DB_USER: devops
-          DB_PASSWORD: devopspass
+      # ----------------------------------------------------------
+      # Verify database connection
+      # ----------------------------------------------------------
+      - name: Verify database connection
         run: |
-
-          echo "=========================================="
-          echo "VERIFYING BACKEND DATABASE CONNECTION"
-          echo "=========================================="
-
-          echo "Environment variables:"
-          echo "DB_HOST=${DB_HOST}"
-          echo "DB_PORT=${DB_PORT}"
-          echo "DB_NAME=${DB_NAME}"
-          echo "DB_USER=${DB_USER}"
-
-          echo ""
-          echo "Testing MySQL connection from Python..."
-
           python - <<'PY'
-          import os
           import mysql.connector
 
-          print("Python sees DB_HOST =", os.getenv("DB_HOST"))
-          print("Python sees DB_PORT =", os.getenv("DB_PORT"))
-          print("Python sees DB_NAME =", os.getenv("DB_NAME"))
-          print("Python sees DB_USER =", os.getenv("DB_USER"))
+          print("Testing MySQL connection...")
 
           conn = mysql.connector.connect(
-              host=os.getenv("DB_HOST"),
-              port=int(os.getenv("DB_PORT")),
-              database=os.getenv("DB_NAME"),
-              user=os.getenv("DB_USER"),
-              password=os.getenv("DB_PASSWORD")
+              host="127.0.0.1",
+              port=3306,
+              database="devopsdb",
+              user="devops",
+              password="devopspass"
           )
 
-          print("MYSQL CONNECTION: SUCCESS")
-
           cursor = conn.cursor()
+          cursor.execute("SELECT 1")
 
-          cursor.execute("SELECT * FROM demo")
-
-          print("demo table data:")
-
-          for row in cursor.fetchall():
-              print(row)
+          print("DATABASE CONNECTION: SUCCESS")
 
           cursor.close()
           conn.close()
           PY
 
-
-      # ==========================================
-      # 10. VERIFY FLASK DATABASE CONNECTION
-      # ==========================================
-
-      - name: Verify Flask Database Connection
-        working-directory: backend
-        env:
-          PYTHONPATH: .
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_NAME: devopsdb
-          DB_USER: devops
-          DB_PASSWORD: devopspass
+      # ----------------------------------------------------------
+      # Verify Flask database connection
+      # ----------------------------------------------------------
+      - name: Verify Flask database connection
         run: |
-
-          echo "=========================================="
-          echo "VERIFYING FLASK DATABASE CONNECTION"
-          echo "=========================================="
-
           python - <<'PY'
-          import os
           import app
 
-          print("Environment DB_HOST:", os.getenv("DB_HOST"))
-          print("Environment DB_PORT:", os.getenv("DB_PORT"))
-          print("Environment DB_NAME:", os.getenv("DB_NAME"))
-          print("Environment DB_USER:", os.getenv("DB_USER"))
-
-          print("Imported app module:", app.__file__)
-
-          print("")
-          print("Calling Flask db_connection()...")
+          print("Testing Flask database connection...")
 
           conn = app.db_connection()
 
-          print("Flask db_connection(): SUCCESS")
-
           cursor = conn.cursor()
+          cursor.execute("SELECT 1")
 
-          cursor.execute("SELECT * FROM demo")
-
-          print("Data returned through Flask database connection:")
-
-          for row in cursor.fetchall():
-              print(row)
+          print("FLASK DATABASE CONNECTION: SUCCESS")
 
           cursor.close()
           conn.close()
           PY
 
-
-      # ==========================================
-      # 11. BACKEND BUILD AND TEST
-      # ==========================================
-
-      - name: Build and Test Backend
-        working-directory: backend
-        env:
-          PYTHONPATH: .
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_NAME: devopsdb
-          DB_USER: devops
-          DB_PASSWORD: devopspass
+      # ----------------------------------------------------------
+      # Run tests
+      # ----------------------------------------------------------
+      - name: Run backend tests
         run: |
-
-          echo "=========================================="
-          echo "BACKEND BUILD AND TEST"
-          echo "=========================================="
-
-          echo "Database Host : $DB_HOST"
-          echo "Database Port : $DB_PORT"
-          echo "Database Name : $DB_NAME"
-          echo "Database User : $DB_USER"
-
-          echo ""
-          echo "Running pytest..."
-
           pytest -v
 
+  # ============================================================
+  # 2. DOCKER BUILD AND PUSH
+  # ============================================================
+  docker-build:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: build-test
 
-      # ==========================================
-      # 12. UPLOAD TEST RESULTS
-      # ==========================================
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
 
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: backend-test-results
-          path: backend/
-          if-no-files-found: warn
+    steps:
 
+      # ----------------------------------------------------------
+      # Checkout
+      # ----------------------------------------------------------
+      - name: Checkout source code
+        uses: actions/checkout@v4
 
-      # ==========================================
-      # 13. SETUP DOCKER BUILDX
-      # ==========================================
+      # ----------------------------------------------------------
+      # Generate image tag
+      # ----------------------------------------------------------
+      - name: Generate image tag
+        id: meta
+        run: |
+          IMAGE_TAG="${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
 
-      - name: Set up Docker Buildx
+          echo "IMAGE_TAG=${IMAGE_TAG}"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      # ----------------------------------------------------------
+      # Docker Buildx
+      # ----------------------------------------------------------
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-
-      # ==========================================
-      # 14. VALIDATE DOCKER COMPOSE
-      # ==========================================
-
-      - name: Validate Docker Compose
-        run: |
-
-          echo "=========================================="
-          echo "VALIDATING DOCKER COMPOSE"
-          echo "=========================================="
-
-          docker compose config
-
-
-      # ==========================================
-      # 15. BUILD DOCKER IMAGE
-      # ==========================================
-
-      - name: Build Docker Image
-        run: |
-
-          echo "=========================================="
-          echo "BUILDING DOCKER IMAGE"
-          echo "=========================================="
-
-          docker compose build
-
-          echo ""
-
-          echo "Docker images:"
-
-          docker images
-
-
-      # ==========================================
-      # 16. LOGIN TO DOCKER HUB
-      # ==========================================
-
+      # ----------------------------------------------------------
+      # Docker Hub login
+      # ----------------------------------------------------------
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # ----------------------------------------------------------
+      # Build and push
+      # ----------------------------------------------------------
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ steps.meta.outputs.image_tag }}
+            ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      # ==========================================
-      # 17. TAG AND PUSH IMAGE
-      # ==========================================
-
-      - name: Tag and Push Docker Image
+      # ----------------------------------------------------------
+      # Display image
+      # ----------------------------------------------------------
+      - name: Display image information
         run: |
-
           echo "=========================================="
-          echo "PUSHING IMAGE TO DOCKER HUB"
+          echo "DOCKER IMAGE CREATED"
           echo "=========================================="
-
-          docker tag \
-            3-tier-devops-lab:latest \
-            ${IMAGE_NAME}:${IMAGE_TAG}
-
-          docker tag \
-            3-tier-devops-lab:latest \
-            ${IMAGE_NAME}:latest
-
-          echo "Pushing versioned image..."
-
-          docker push \
-            ${IMAGE_NAME}:${IMAGE_TAG}
-
-          echo "Pushing latest image..."
-
-          docker push \
-            ${IMAGE_NAME}:latest
-
-          echo ""
-
-          echo "=========================================="
-          echo "DOCKER HUB PUSH SUCCESSFUL"
-          echo "=========================================="
-
           echo "Image:"
-          echo "${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ steps.meta.outputs.image_tag }}"
+          echo "=========================================="
 
-          echo "Latest:"
-          echo "${IMAGE_NAME}:latest"
+  # ============================================================
+  # 3. DEPLOY TO VPS
+  # ============================================================
+  deploy:
+    name: Deploy 3-Tier Application to VPS
+    runs-on: ubuntu-latest
+    needs: docker-build
 
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_deploy != true }}
 
-      # ==========================================
-      # 18. SETUP SSH KEY
-      # ==========================================
+    env:
+      IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
 
-      - name: Setup SSH Key
-        if: ${{ !inputs.skip_deploy }}
+    steps:
+
+      # ----------------------------------------------------------
+      # Checkout repository
+      # ----------------------------------------------------------
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # ----------------------------------------------------------
+      # Setup SSH
+      # ----------------------------------------------------------
+      - name: Setup SSH
         run: |
-
-          echo "=========================================="
-          echo "SETTING UP SSH"
-          echo "=========================================="
-
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
 
-          printf '%s\n' '${{ secrets.SSH_PRIVATE_KEY }}' \
-            > ~/.ssh/id_rsa
-
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-          ssh-keyscan -H "${SERVER_IP}" \
-            >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
-          echo "SSH key configured."
+          chmod 644 ~/.ssh/known_hosts
 
-
-      # ==========================================
-      # 19. TEST SSH CONNECTION
-      # ==========================================
-
-      - name: Test SSH Connection
-        if: ${{ !inputs.skip_deploy }}
+      # ----------------------------------------------------------
+      # Test SSH
+      # ----------------------------------------------------------
+      - name: Test SSH connection
         run: |
-
-          echo "=========================================="
-          echo "TESTING SSH CONNECTION"
-          echo "=========================================="
-
-          echo "Server : ${SERVER_IP}"
-          echo "User   : ${SERVER_USER}"
+          echo "Testing SSH connection..."
 
           ssh \
-            -i ~/.ssh/id_rsa \
-            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=10 \
-            -o StrictHostKeyChecking=no \
-            ${SERVER_USER}@${SERVER_IP} \
-            "hostname && docker --version"
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" \
+            "echo 'SSH CONNECTION SUCCESSFUL'"
 
-
-      # ==========================================
-      # 20. DEPLOY DOCKER HUB IMAGE
-      # ==========================================
-
-      - name: Deploy Docker Hub Image
-        if: ${{ !inputs.skip_deploy }}
+      # ----------------------------------------------------------
+      # Create deployment directory
+      # ----------------------------------------------------------
+      - name: Prepare deployment directory
         run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF'
 
+          set -e
+
+          mkdir -p ~/3-tier-devops-lab
+          mkdir -p ~/3-tier-devops-lab/frontend
+          mkdir -p ~/3-tier-devops-lab/database
+
+          echo "Deployment directory ready"
+
+          EOF
+
+      # ----------------------------------------------------------
+      # Copy Docker Compose
+      # ----------------------------------------------------------
+      - name: Copy docker-compose.yml
+        run: |
+          scp \
+            docker-compose.yml \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}:~/3-tier-devops-lab/docker-compose.yml"
+
+      # ----------------------------------------------------------
+      # Copy Nginx configuration
+      # ----------------------------------------------------------
+      - name: Copy nginx configuration
+        run: |
+          scp \
+            frontend/nginx.conf \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}:~/3-tier-devops-lab/frontend/nginx.conf"
+
+      # ----------------------------------------------------------
+      # Copy database initialization
+      # ----------------------------------------------------------
+      - name: Copy database initialization
+        run: |
+          scp \
+            database/init.sql \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}:~/3-tier-devops-lab/database/init.sql"
+
+      # ----------------------------------------------------------
+      # Deploy Compose stack
+      # ----------------------------------------------------------
+      - name: Deploy 3-tier application
+        run: |
           echo "=========================================="
           echo "DEPLOYING 3-TIER APPLICATION"
           echo "=========================================="
 
-          echo "Application : ${APP_NAME}"
-          echo "Target Host : ${SERVER_IP}"
-          echo "Image       : ${IMAGE_NAME}:${IMAGE_TAG}"
-          echo "Host Port   : ${FRONTEND_PORT}"
-          echo "Container   : ${CONTAINER_PORT}"
+          echo "Application : ${{ env.APP_NAME }}"
+          echo "Target Host : ${{ secrets.SERVER_IP }}"
+          echo "Image       : ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ env.IMAGE_TAG }}"
 
-          ssh \
-            -i ~/.ssh/id_rsa \
-            -o BatchMode=yes \
-            -o ConnectTimeout=10 \
-            -o StrictHostKeyChecking=no \
-            ${SERVER_USER}@${SERVER_IP} << EOF
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << EOF
 
-            set -e
+          set -e
 
-            echo "=========================================="
-            echo "REMOTE DEPLOYMENT"
-            echo "=========================================="
+          cd ~/3-tier-devops-lab
 
-            echo ""
-            echo "Docker version:"
-            docker --version
+          echo "=========================================="
+          echo "CREATING IMAGE CONFIGURATION"
+          echo "=========================================="
 
-            echo ""
-            echo "Logging in to Docker Hub..."
+          cat > .env << ENVEOF
+          IMAGE_NAME=${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab
+          IMAGE_TAG=${{ env.IMAGE_TAG }}
+          ENVEOF
 
-            echo '${{ secrets.DOCKER_PASSWORD }}' | \
-              docker login \
-              --username '${{ secrets.DOCKER_USERNAME }}' \
-              --password-stdin
+          echo "Deployment configuration:"
+          cat .env
 
-            echo ""
-            echo "Pulling Docker Hub image..."
+          echo "=========================================="
+          echo "DOCKER COMPOSE VERSION"
+          echo "=========================================="
 
-            docker pull ${IMAGE_NAME}:${IMAGE_TAG}
+          docker compose version
 
-            echo ""
-            echo "Stopping existing container..."
+          echo "=========================================="
+          echo "PULLING IMAGES"
+          echo "=========================================="
 
-            docker stop ${APP_NAME} 2>/dev/null || true
+          docker compose pull
 
-            echo ""
-            echo "Removing existing container..."
+          echo "=========================================="
+          echo "STARTING 3-TIER APPLICATION"
+          echo "=========================================="
 
-            docker rm ${APP_NAME} 2>/dev/null || true
+          docker compose up -d
 
-            echo ""
-            echo "Starting new container..."
+          echo "=========================================="
+          echo "CONTAINER STATUS"
+          echo "=========================================="
 
-            docker run -d \
-              --name ${APP_NAME} \
-              --restart unless-stopped \
-              -p ${FRONTEND_PORT}:${CONTAINER_PORT} \
-              ${IMAGE_NAME}:${IMAGE_TAG}
-
-            echo ""
-            echo "=========================================="
-            echo "CONTAINER STATUS"
-            echo "=========================================="
-
-            docker ps \
-              --filter "name=${APP_NAME}"
-
-            echo ""
-            echo "=========================================="
-            echo "DEPLOYMENT SUCCESSFUL"
-            echo "=========================================="
-
-            echo "Running image:"
-            docker inspect ${APP_NAME} \
-              --format '{{.Config.Image}}'
+          docker compose ps
 
           EOF
 
-
-      # ==========================================
-      # 21. DEPLOYMENT HEALTH CHECK
-      # ==========================================
-
-      - name: Deployment Health Check
-        if: ${{ !inputs.skip_deploy }}
+      # ----------------------------------------------------------
+      # Wait for services
+      # ----------------------------------------------------------
+      - name: Wait for application startup
         run: |
+          echo "Waiting for application startup..."
+
+          sleep 20
+
+      # ----------------------------------------------------------
+      # Show container status
+      # ----------------------------------------------------------
+      - name: Verify container status
+        run: |
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF'
+
+          cd ~/3-tier-devops-lab
 
           echo "=========================================="
-          echo "DEPLOYMENT HEALTH CHECK"
+          echo "CONTAINER STATUS"
           echo "=========================================="
 
-          ssh \
-            -i ~/.ssh/id_rsa \
-            -o BatchMode=yes \
-            -o ConnectTimeout=10 \
-            -o StrictHostKeyChecking=no \
-            ${SERVER_USER}@${SERVER_IP} << EOF
+          docker compose ps
 
-            set -e
+          echo "=========================================="
+          echo "BACKEND HEALTH"
+          echo "=========================================="
 
-            echo "Checking container status..."
+          docker inspect devops-backend \
+            --format='Backend health: {{.State.Health.Status}}' || true
 
-            docker ps \
-              --filter "name=${APP_NAME}"
+          echo "=========================================="
+          echo "DATABASE HEALTH"
+          echo "=========================================="
 
-            echo ""
-            echo "Checking container..."
-
-            docker inspect \
-              --format '{{.State.Status}}' \
-              ${APP_NAME}
-
-            echo ""
-            echo "Checking container logs..."
-
-            docker logs \
-              --tail 50 \
-              ${APP_NAME}
-
-            echo ""
-            echo "Deployment health check completed."
+          docker inspect devops-database \
+            --format='Database health: {{.State.Health.Status}}' || true
 
           EOF
 
-
-      # ==========================================
-      # 22. APPLICATION HEALTH CHECK
-      # ==========================================
-
-      - name: Application Health Check
-        if: ${{ !inputs.skip_deploy }}
+      # ----------------------------------------------------------
+      # Application health check
+      # ----------------------------------------------------------
+      - name: Application health check
         run: |
-
           echo "=========================================="
           echo "APPLICATION HEALTH CHECK"
           echo "=========================================="
 
-          ssh \
-            -i ~/.ssh/id_rsa \
-            -o BatchMode=yes \
-            -o ConnectTimeout=10 \
-            -o StrictHostKeyChecking=no \
-            ${SERVER_USER}@${SERVER_IP} << EOF
+          for i in {1..12}; do
 
-            set -e
+            echo "Health check attempt $i..."
 
-            echo "Checking application..."
+            if ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" \
+              "curl -fsS --max-time 10 http://localhost:${{ env.FRONTEND_PORT }}/"; then
 
-            curl -f \
-              --max-time 10 \
-              http://localhost:${FRONTEND_PORT}/
+              echo ""
+              echo "=========================================="
+              echo "APPLICATION HEALTH CHECK PASSED"
+              echo "=========================================="
 
-            echo ""
+              exit 0
+            fi
 
-            echo "Application health check successful."
+            echo "Application not ready yet..."
+            sleep 10
+
+          done
+
+          echo ""
+          echo "=========================================="
+          echo "APPLICATION HEALTH CHECK FAILED"
+          echo "=========================================="
+
+          exit 1
+
+      # ----------------------------------------------------------
+      # Show logs if deployment failed
+      # ----------------------------------------------------------
+      - name: Show application logs on failure
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "DEPLOYMENT DEBUG INFORMATION"
+          echo "=========================================="
+
+          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF' || true
+
+          cd ~/3-tier-devops-lab
+
+          echo "=========================================="
+          echo "COMPOSE STATUS"
+          echo "=========================================="
+
+          docker compose ps
+
+          echo "=========================================="
+          echo "BACKEND LOGS"
+          echo "=========================================="
+
+          docker logs --tail 100 devops-backend || true
+
+          echo "=========================================="
+          echo "DATABASE LOGS"
+          echo "=========================================="
+
+          docker logs --tail 100 devops-database || true
+
+          echo "=========================================="
+          echo "FRONTEND LOGS"
+          echo "=========================================="
+
+          docker logs --tail 100 devops-frontend || true
 
           EOF
 
-
-      # ==========================================
-      # 23. SUCCESS
-      # ==========================================
-
-      - name: Deployment Successful
+      # ----------------------------------------------------------
+      # Deployment success
+      # ----------------------------------------------------------
+      - name: Deployment successful
         if: success()
         run: |
-
-          echo "=========================================="
-          echo "3-TIER DEPLOYMENT SUCCESSFUL"
-          echo "=========================================="
-
-          echo "Application : ${APP_NAME}"
-          echo "Image       : ${IMAGE_NAME}:${IMAGE_TAG}"
-          echo "Target Host : ${SERVER_IP}"
-
           echo ""
-          echo "Application URL:"
-          echo "http://${SERVER_IP}:${FRONTEND_PORT}"
-
           echo "=========================================="
-
-
-      # ==========================================
-      # 24. FAILURE
-      # ==========================================
-
-      - name: Pipeline Failed
-        if: failure()
-        run: |
-
+          echo "DEPLOYMENT SUCCESSFUL"
           echo "=========================================="
-          echo "3-TIER PIPELINE FAILED"
-          echo "=========================================="
-
-          echo "Build       : ${{ github.run_number }}"
-          echo "Application : ${APP_NAME}"
-          echo "Target Host : ${SERVER_IP}"
-
           echo ""
-          echo "Check GitHub Actions logs for details."
-
+          echo "Application : ${{ env.APP_NAME }}"
+          echo "Image       : ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ env.IMAGE_TAG }}"
+          echo "Frontend    : http://${{ secrets.SERVER_IP }}:${{ env.FRONTEND_PORT }}"
+          echo ""
           echo "=========================================="
-
-
-      # ==========================================
-      # 25. CLEANUP
-      # ==========================================
-
-      - name: Cleanup
-        if: always()
-        run: |
-
-          echo "Cleaning temporary files..."
-
-          docker image prune -f || true
-
-          rm -f ~/.ssh/id_rsa || true
+```
