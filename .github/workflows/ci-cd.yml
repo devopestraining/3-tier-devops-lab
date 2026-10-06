@@ -1,4 +1,4 @@
-
+```yaml
 name: 3-Tier DevOps CI/CD
 
 on:
@@ -14,10 +14,14 @@ on:
         default: false
         type: boolean
 
+# ============================================================
+# GLOBAL ENVIRONMENT
+# ============================================================
+
 env:
   APP_NAME: 3-tier-devops-lab
 
-  # Docker Hub image
+  # Docker Hub
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab
 
   # VPS
@@ -28,16 +32,28 @@ env:
   FRONTEND_PORT: 8080
   BACKEND_PORT: 5000
 
+# ============================================================
+# JOBS
+# ============================================================
+
 jobs:
 
   # ============================================================
-  # 1. BUILD AND TEST
+  # 1. BUILD AND TEST BACKEND
   # ============================================================
+
   build-test:
+
     name: Build and Test Backend
+
     runs-on: ubuntu-latest
 
+    # ----------------------------------------------------------
+    # MySQL service for CI testing
+    # ----------------------------------------------------------
+
     services:
+
       mysql:
         image: mysql:8.4
 
@@ -57,36 +73,61 @@ jobs:
           --health-retries=10
 
     defaults:
+
       run:
         working-directory: backend
 
     env:
+
       DB_HOST: 127.0.0.1
       DB_PORT: 3306
       DB_NAME: devopsdb
       DB_USER: devops
       DB_PASSWORD: devopspass
+
       PYTHONPATH: .
 
     steps:
 
-      # ----------------------------------------------------------
-      # Checkout
-      # ----------------------------------------------------------
+      # ========================================================
+      # CHECKOUT
+      # ========================================================
+
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # ----------------------------------------------------------
-      # Python
-      # ----------------------------------------------------------
+      # ========================================================
+      # PYTHON
+      # ========================================================
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # ----------------------------------------------------------
-      # Install dependencies
-      # ----------------------------------------------------------
+      # ========================================================
+      # INSTALL MYSQL CLIENT
+      # ========================================================
+
+      # IMPORTANT:
+      # This must happen BEFORE the Wait for MySQL step because
+      # mysqladmin is used by that step.
+
+      - name: Install MySQL client
+        working-directory: .
+        run: |
+          echo "Installing MySQL client..."
+
+          sudo apt-get update
+          sudo apt-get install -y mysql-client
+
+          mysql --version
+          mysqladmin --version
+
+      # ========================================================
+      # INSTALL PYTHON DEPENDENCIES
+      # ========================================================
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -97,15 +138,20 @@ jobs:
 
           pip install pytest
 
-      # ----------------------------------------------------------
-      # Wait for MySQL
-      # ----------------------------------------------------------
+      # ========================================================
+      # WAIT FOR MYSQL
+      # ========================================================
+
       - name: Wait for MySQL
         working-directory: .
         run: |
-          echo "Waiting for MySQL..."
+
+          echo "=========================================="
+          echo "WAITING FOR MYSQL"
+          echo "=========================================="
 
           for i in {1..30}; do
+
             if mysqladmin ping \
               -h 127.0.0.1 \
               -P 3306 \
@@ -113,30 +159,33 @@ jobs:
               -prootpass \
               --silent; then
 
-              echo "MySQL is ready"
-              break
+              echo "MySQL is ready."
+              exit 0
+
             fi
 
-            echo "Waiting for MySQL... attempt $i"
+            echo "MySQL not ready yet..."
+            echo "Attempt: $i/30"
+
             sleep 2
+
           done
 
-      # ----------------------------------------------------------
-      # Install MySQL client
-      # ----------------------------------------------------------
-      - name: Install MySQL client
-        working-directory: .
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mysql-client
+          echo "ERROR: MySQL did not become ready."
 
-      # ----------------------------------------------------------
-      # Initialize database
-      # ----------------------------------------------------------
+          exit 1
+
+      # ========================================================
+      # INITIALIZE DATABASE
+      # ========================================================
+
       - name: Initialize database
         working-directory: .
         run: |
-          echo "Initializing database..."
+
+          echo "=========================================="
+          echo "INITIALIZING DATABASE"
+          echo "=========================================="
 
           mysql \
             -h 127.0.0.1 \
@@ -145,17 +194,22 @@ jobs:
             -prootpass \
             devopsdb < database/init.sql
 
-          echo "Database initialized"
+          echo "Database initialization completed."
 
-      # ----------------------------------------------------------
-      # Verify database connection
-      # ----------------------------------------------------------
+      # ========================================================
+      # VERIFY DATABASE CONNECTION
+      # ========================================================
+
       - name: Verify database connection
         run: |
+
           python - <<'PY'
+
           import mysql.connector
 
-          print("Testing MySQL connection...")
+          print("==========================================")
+          print("TESTING MYSQL CONNECTION")
+          print("==========================================")
 
           conn = mysql.connector.connect(
               host="127.0.0.1",
@@ -166,155 +220,235 @@ jobs:
           )
 
           cursor = conn.cursor()
+
           cursor.execute("SELECT 1")
 
+          # IMPORTANT:
+          # Consume the result before closing the cursor.
+          result = cursor.fetchone()
+
           print("DATABASE CONNECTION: SUCCESS")
+          print("Query result:", result)
 
           cursor.close()
           conn.close()
+
+          print("Database connection test completed successfully.")
+
           PY
 
-      # ----------------------------------------------------------
-      # Verify Flask database connection
-      # ----------------------------------------------------------
+      # ========================================================
+      # VERIFY FLASK DATABASE CONNECTION
+      # ========================================================
+
       - name: Verify Flask database connection
         run: |
+
           python - <<'PY'
+
           import app
 
-          print("Testing Flask database connection...")
+          print("==========================================")
+          print("TESTING FLASK DATABASE CONNECTION")
+          print("==========================================")
 
           conn = app.db_connection()
 
           cursor = conn.cursor()
+
           cursor.execute("SELECT 1")
 
+          # IMPORTANT:
+          # Consume the result before closing the cursor.
+          result = cursor.fetchone()
+
           print("FLASK DATABASE CONNECTION: SUCCESS")
+          print("Query result:", result)
 
           cursor.close()
           conn.close()
+
+          print("Flask database connection test completed successfully.")
+
           PY
 
-      # ----------------------------------------------------------
-      # Run tests
-      # ----------------------------------------------------------
+      # ========================================================
+      # RUN BACKEND TESTS
+      # ========================================================
+
       - name: Run backend tests
         run: |
+
+          echo "=========================================="
+          echo "RUNNING PYTEST"
+          echo "=========================================="
+
           pytest -v
 
   # ============================================================
-  # 2. DOCKER BUILD AND PUSH
+  # 2. BUILD AND PUSH DOCKER IMAGE
   # ============================================================
+
   docker-build:
+
     name: Build and Push Docker Image
+
     runs-on: ubuntu-latest
-    needs: build-test
+
+    needs:
+      - build-test
 
     outputs:
+
       image_tag: ${{ steps.meta.outputs.image_tag }}
 
     steps:
 
-      # ----------------------------------------------------------
-      # Checkout
-      # ----------------------------------------------------------
+      # ========================================================
+      # CHECKOUT
+      # ========================================================
+
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # ----------------------------------------------------------
-      # Generate image tag
-      # ----------------------------------------------------------
+      # ========================================================
+      # GENERATE IMAGE TAG
+      # ========================================================
+
       - name: Generate image tag
         id: meta
         run: |
+
           IMAGE_TAG="${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
 
+          echo "=========================================="
+          echo "DOCKER IMAGE TAG"
+          echo "=========================================="
+
           echo "IMAGE_TAG=${IMAGE_TAG}"
+
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
-      # ----------------------------------------------------------
-      # Docker Buildx
-      # ----------------------------------------------------------
+      # ========================================================
+      # DOCKER BUILDX
+      # ========================================================
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ----------------------------------------------------------
-      # Docker Hub login
-      # ----------------------------------------------------------
+      # ========================================================
+      # DOCKER HUB LOGIN
+      # ========================================================
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
+
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # ----------------------------------------------------------
-      # Build and push
-      # ----------------------------------------------------------
+      # ========================================================
+      # BUILD AND PUSH
+      # ========================================================
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
+
         with:
+
           context: ./backend
+
           push: true
+
           tags: |
             ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ steps.meta.outputs.image_tag }}
             ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:latest
+
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # ----------------------------------------------------------
-      # Display image
-      # ----------------------------------------------------------
+      # ========================================================
+      # DISPLAY IMAGE
+      # ========================================================
+
       - name: Display image information
         run: |
+
           echo "=========================================="
           echo "DOCKER IMAGE CREATED"
           echo "=========================================="
+
           echo "Image:"
           echo "${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ steps.meta.outputs.image_tag }}"
+
           echo "=========================================="
 
   # ============================================================
   # 3. DEPLOY TO VPS
   # ============================================================
-  deploy:
-    name: Deploy 3-Tier Application to VPS
-    runs-on: ubuntu-latest
-    needs: docker-build
 
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_deploy != true }}
+  deploy:
+
+    name: Deploy 3-Tier Application to VPS
+
+    runs-on: ubuntu-latest
+
+    needs:
+      - docker-build
+
+    # Deploy automatically for push.
+    # For manual execution, respect skip_deploy.
+
+    if: >
+      github.event_name != 'workflow_dispatch' ||
+      inputs.skip_deploy != true
 
     env:
+
       IMAGE_TAG: ${{ needs.docker-build.outputs.image_tag }}
 
     steps:
 
-      # ----------------------------------------------------------
-      # Checkout repository
-      # ----------------------------------------------------------
+      # ========================================================
+      # CHECKOUT
+      # ========================================================
+
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      # ----------------------------------------------------------
-      # Setup SSH
-      # ----------------------------------------------------------
+      # ========================================================
+      # SETUP SSH
+      # ========================================================
+
       - name: Setup SSH
         run: |
+
+          echo "=========================================="
+          echo "SETTING UP SSH"
+          echo "=========================================="
+
           mkdir -p ~/.ssh
+
           chmod 700 ~/.ssh
 
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+
           chmod 600 ~/.ssh/id_rsa
 
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" >> ~/.ssh/known_hosts
 
           chmod 644 ~/.ssh/known_hosts
 
-      # ----------------------------------------------------------
-      # Test SSH
-      # ----------------------------------------------------------
+      # ========================================================
+      # TEST SSH
+      # ========================================================
+
       - name: Test SSH connection
         run: |
-          echo "Testing SSH connection..."
+
+          echo "=========================================="
+          echo "TESTING SSH CONNECTION"
+          echo "=========================================="
 
           ssh \
             -o StrictHostKeyChecking=yes \
@@ -322,71 +456,74 @@ jobs:
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" \
             "echo 'SSH CONNECTION SUCCESSFUL'"
 
-      # ----------------------------------------------------------
-      # Create deployment directory
-      # ----------------------------------------------------------
+      # ========================================================
+      # PREPARE VPS DIRECTORY
+      # ========================================================
+
       - name: Prepare deployment directory
         run: |
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF'
+
+          ssh \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF'
 
           set -e
 
-          mkdir -p ~/3-tier-devops-lab
           mkdir -p ~/3-tier-devops-lab/frontend
           mkdir -p ~/3-tier-devops-lab/database
 
-          echo "Deployment directory ready"
+          echo "Deployment directory ready."
 
           EOF
 
-      # ----------------------------------------------------------
-      # Copy Docker Compose
-      # ----------------------------------------------------------
+      # ========================================================
+      # COPY DOCKER COMPOSE
+      # ========================================================
+
       - name: Copy docker-compose.yml
         run: |
+
           scp \
             docker-compose.yml \
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}:~/3-tier-devops-lab/docker-compose.yml"
 
-      # ----------------------------------------------------------
-      # Copy Nginx configuration
-      # ----------------------------------------------------------
+      # ========================================================
+      # COPY NGINX CONFIG
+      # ========================================================
+
       - name: Copy nginx configuration
         run: |
+
           scp \
             frontend/nginx.conf \
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}:~/3-tier-devops-lab/frontend/nginx.conf"
 
-      # ----------------------------------------------------------
-      # Copy database initialization
-      # ----------------------------------------------------------
+      # ========================================================
+      # COPY DATABASE INITIALIZATION
+      # ========================================================
+
       - name: Copy database initialization
         run: |
+
           scp \
             database/init.sql \
             "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}:~/3-tier-devops-lab/database/init.sql"
 
-      # ----------------------------------------------------------
-      # Deploy Compose stack
-      # ----------------------------------------------------------
-      - name: Deploy 3-tier application
+      # ========================================================
+      # VALIDATE COMPOSE CONFIGURATION
+      # ========================================================
+
+      - name: Validate Docker Compose configuration
         run: |
-          echo "=========================================="
-          echo "DEPLOYING 3-TIER APPLICATION"
-          echo "=========================================="
 
-          echo "Application : ${{ env.APP_NAME }}"
-          echo "Target Host : ${{ secrets.SERVER_IP }}"
-          echo "Image       : ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ env.IMAGE_TAG }}"
-
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << EOF
+          ssh \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << EOF
 
           set -e
 
           cd ~/3-tier-devops-lab
 
           echo "=========================================="
-          echo "CREATING IMAGE CONFIGURATION"
+          echo "CREATING DEPLOYMENT ENVIRONMENT"
           echo "=========================================="
 
           cat > .env << ENVEOF
@@ -394,8 +531,8 @@ jobs:
           IMAGE_TAG=${{ env.IMAGE_TAG }}
           ENVEOF
 
-          echo "Deployment configuration:"
-          cat .env
+          echo "Deployment image:"
+          echo "${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ env.IMAGE_TAG }}"
 
           echo "=========================================="
           echo "DOCKER COMPOSE VERSION"
@@ -404,7 +541,41 @@ jobs:
           docker compose version
 
           echo "=========================================="
-          echo "PULLING IMAGES"
+          echo "VALIDATING COMPOSE CONFIGURATION"
+          echo "=========================================="
+
+          docker compose config
+
+          echo "=========================================="
+          echo "COMPOSE CONFIGURATION VALID"
+          echo "=========================================="
+
+          EOF
+
+      # ========================================================
+      # DEPLOY
+      # ========================================================
+
+      - name: Deploy 3-tier application
+        run: |
+
+          echo "=========================================="
+          echo "DEPLOYING 3-TIER APPLICATION"
+          echo "=========================================="
+
+          echo "Application : ${{ env.APP_NAME }}"
+          echo "Target Host : ${{ secrets.SERVER_IP }}"
+          echo "Image       : ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ env.IMAGE_TAG }}"
+
+          ssh \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << EOF
+
+          set -e
+
+          cd ~/3-tier-devops-lab
+
+          echo "=========================================="
+          echo "PULLING DOCKER IMAGES"
           echo "=========================================="
 
           docker compose pull
@@ -413,7 +584,7 @@ jobs:
           echo "STARTING 3-TIER APPLICATION"
           echo "=========================================="
 
-          docker compose up -d
+          docker compose up -d --remove-orphans
 
           echo "=========================================="
           echo "CONTAINER STATUS"
@@ -423,26 +594,35 @@ jobs:
 
           EOF
 
-      # ----------------------------------------------------------
-      # Wait for services
-      # ----------------------------------------------------------
+      # ========================================================
+      # WAIT FOR SERVICES
+      # ========================================================
+
       - name: Wait for application startup
         run: |
-          echo "Waiting for application startup..."
+
+          echo "=========================================="
+          echo "WAITING FOR APPLICATION STARTUP"
+          echo "=========================================="
 
           sleep 20
 
-      # ----------------------------------------------------------
-      # Show container status
-      # ----------------------------------------------------------
+      # ========================================================
+      # VERIFY CONTAINERS
+      # ========================================================
+
       - name: Verify container status
         run: |
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF'
+
+          ssh \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF'
+
+          set +e
 
           cd ~/3-tier-devops-lab
 
           echo "=========================================="
-          echo "CONTAINER STATUS"
+          echo "COMPOSE STATUS"
           echo "=========================================="
 
           docker compose ps
@@ -452,31 +632,42 @@ jobs:
           echo "=========================================="
 
           docker inspect devops-backend \
-            --format='Backend health: {{.State.Health.Status}}' || true
+            --format='Backend health: {{.State.Health.Status}}'
 
           echo "=========================================="
           echo "DATABASE HEALTH"
           echo "=========================================="
 
           docker inspect devops-database \
-            --format='Database health: {{.State.Health.Status}}' || true
+            --format='Database health: {{.State.Health.Status}}'
+
+          echo "=========================================="
+          echo "FRONTEND STATUS"
+          echo "=========================================="
+
+          docker inspect devops-frontend \
+            --format='Frontend status: {{.State.Status}}'
 
           EOF
 
-      # ----------------------------------------------------------
-      # Application health check
-      # ----------------------------------------------------------
+      # ========================================================
+      # APPLICATION HEALTH CHECK
+      # ========================================================
+
       - name: Application health check
         run: |
+
           echo "=========================================="
           echo "APPLICATION HEALTH CHECK"
           echo "=========================================="
 
           for i in {1..12}; do
 
-            echo "Health check attempt $i..."
+            echo ""
+            echo "Health check attempt $i/12"
 
-            if ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" \
+            if ssh \
+              "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" \
               "curl -fsS --max-time 10 http://localhost:${{ env.FRONTEND_PORT }}/"; then
 
               echo ""
@@ -485,9 +676,11 @@ jobs:
               echo "=========================================="
 
               exit 0
+
             fi
 
-            echo "Application not ready yet..."
+            echo "Application not ready yet."
+
             sleep 10
 
           done
@@ -499,17 +692,20 @@ jobs:
 
           exit 1
 
-      # ----------------------------------------------------------
-      # Show logs if deployment failed
-      # ----------------------------------------------------------
+      # ========================================================
+      # DEBUG INFORMATION
+      # ========================================================
+
       - name: Show application logs on failure
         if: failure()
         run: |
+
           echo "=========================================="
           echo "DEPLOYMENT DEBUG INFORMATION"
           echo "=========================================="
 
-          ssh "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF' || true
+          ssh \
+            "${{ secrets.SSH_USER }}@${{ secrets.SERVER_IP }}" << 'EOF' || true
 
           cd ~/3-tier-devops-lab
 
@@ -537,21 +733,40 @@ jobs:
 
           docker logs --tail 100 devops-frontend || true
 
+          echo "=========================================="
+          echo "BACKEND ENVIRONMENT"
+          echo "=========================================="
+
+          docker inspect devops-backend \
+            --format='{{range .Config.Env}}{{println .}}{{end}}' \
+            | grep '^DB_' || true
+
           EOF
 
-      # ----------------------------------------------------------
-      # Deployment success
-      # ----------------------------------------------------------
+      # ========================================================
+      # SUCCESS
+      # ========================================================
+
       - name: Deployment successful
         if: success()
         run: |
+
           echo ""
           echo "=========================================="
           echo "DEPLOYMENT SUCCESSFUL"
           echo "=========================================="
+
           echo ""
           echo "Application : ${{ env.APP_NAME }}"
           echo "Image       : ${{ secrets.DOCKER_USERNAME }}/3-tier-devops-lab:${{ env.IMAGE_TAG }}"
           echo "Frontend    : http://${{ secrets.SERVER_IP }}:${{ env.FRONTEND_PORT }}"
+
+          echo ""
+          echo "Architecture:"
+          echo "  Nginx    -> Backend"
+          echo "  Backend  -> MySQL"
+          echo "  MySQL    -> Persistent Volume"
+
           echo ""
           echo "=========================================="
+```
